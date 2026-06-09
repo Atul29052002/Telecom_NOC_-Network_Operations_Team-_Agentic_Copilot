@@ -1,0 +1,12 @@
+pandas
+numpy
+matplotlib
+networkx
+reportlab
+pypdf
+chromadb
+langchain
+langgraph
+fastapi
+streamlit
+uvicorn
