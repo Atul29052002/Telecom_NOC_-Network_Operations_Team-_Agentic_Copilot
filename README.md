@@ -35,7 +35,7 @@ flowchart TD
 ## Run locally
 
 1. Create and activate a virtual environment.
-2. Install dependencies: `pip install -r requirements.txt`
+2. Install dependencies: `pip install -r requirements.txt` and `pip install "streamlit[pdf]"`
 3. Generate assets: `python -m app.run_demo`
 4. Launch the MCP server: `python -m app.mcp_server`
 5. Launch the UI: `streamlit run app/streamlit_app.py`

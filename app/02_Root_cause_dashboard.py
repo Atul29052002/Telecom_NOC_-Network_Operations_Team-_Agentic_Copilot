@@ -34,16 +34,19 @@ def load_top_candidates() -> pd.DataFrame:
     engine_output = run_root_cause_engine(str(ALARM_PATH), output_dir=str(DATA_DIR))
     return pd.DataFrame(engine_output["top_candidates"])
 
-font_css = """
+st.markdown(
+    """
 <style>
-    button[data-baseweb="tab"] {
-    font-size: 24px;
-    margin: 0;
-    width: 100%;
+    .stApp { background-color: #0f172a; color: #f8fafc; }
+    .enterprise-card {
+        background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+        padding: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); margin-bottom: 1rem;
     }
+    button[data-baseweb="tab"] { font-size: 1.1rem !important; font-weight: 600 !important; }
+    h1, h2, h3 { color: #f8fafc; font-weight: 700; }
+    .stImage { border-radius: 12px; border: 1px solid #334155; }
 </style>
-"""
-st.write(font_css, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 st.header('Root Cause Dashboard')
 tabs = st.tabs(['Root Cause Nodes', 'Network Topology', 'Root Cause Alarm Subgraph'])
 
@@ -68,7 +71,21 @@ with tabs[0]:
         with status_col:
             st.success("Executed")
         st.subheader('Root Cause Identification Agent Output')
-        st.json(st.session_state.get("root_cause_output", {}))
+
+        # Initialize toggle state for Root Cause view
+        if "show_json_rca" not in st.session_state:
+            st.session_state.show_json_rca = False
+
+        # Toggle Button
+        if st.button("Toggle JSON/Text View"):
+            st.session_state.show_json_rca = not st.session_state.show_json_rca
+
+        rc_output = st.session_state.get("root_cause_output", {})
+        if st.session_state.show_json_rca:
+            st.json(rc_output)
+        else:
+            for key, value in rc_output.items():
+                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
 
 
 with tabs[1]:

@@ -8,5 +8,5 @@ chromadb
 langchain
 langgraph
 fastapi
-streamlit
+streamlit[pdf]
 uvicorn

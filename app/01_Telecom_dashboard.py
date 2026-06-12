@@ -87,16 +87,21 @@ def get_alarm_map_points(alarms: pd.DataFrame, current_time: pd.Timestamp) -> pd
     current_window = alarms["alarm_raised_time"].between(window_start, current_time, inclusive="both")
     return alarms.loc[current_window, ["latitude", "longitude"]].dropna()
 
-font_css = """
+st.markdown(
+    """
 <style>
-    button[data-baseweb="tab"] {
-    font-size: 24px;
-    margin: 0;
-    width: 100%;
+    .stApp { background-color: #0f172a; color: #f8fafc; }
+    .enterprise-card {
+        background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+        padding: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); margin-bottom: 1rem;
     }
+    [data-testid="stMetricValue"] { color: #3b82f6; font-weight: 700; text-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
+    [data-testid="stMetricLabel"] { color: #94a3b8 !important; }
+    button[data-baseweb="tab"] { font-size: 1.1rem !important; font-weight: 600 !important; }
+    h1, h2, h3 { color: #f8fafc; font-weight: 700; }
+    .stDataFrame { background-color: #1e293b; border-radius: 8px; }
 </style>
-"""
-st.write(font_css, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 tabs = st.tabs(['Network KPI', 'Alarm Logs'])
 

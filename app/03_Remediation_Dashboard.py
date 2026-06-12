@@ -29,16 +29,18 @@ SOLM_PATH = DATA_DIR / "solution_manual.pdf"
 
 # df = pd.read_csv('Telecom_NOC_-Network_Operations_Team-_Agentic_Copilot\\data\\alarm_logs.csv')
 
-font_css = """
+st.markdown(
+    """
 <style>
-    button[data-baseweb="tab"] {
-    font-size: 24px;
-    margin: 0;
-    width: 100%;
+    .stApp { background-color: #0f172a; color: #f8fafc; }
+    .enterprise-card {
+        background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+        padding: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); margin-bottom: 1rem;
     }
+    button[data-baseweb="tab"] { font-size: 1.1rem !important; font-weight: 600 !important; }
+    h1, h2, h3 { color: #f8fafc; font-weight: 700; }
 </style>
-"""
-st.write(font_css, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 st.header('Remediation Dashboard')
 tabs = st.tabs(['Remediation', 'Solution Manual'])
 
@@ -79,7 +81,22 @@ with tabs[0]:
         with status_col:
             st.success("Executed")
         st.subheader('Remediation Agent Output')
-        st.json(st.session_state.get("remediation_output", {}))
+
+        # Initialize toggle state
+        if "show_json_view" not in st.session_state:
+            st.session_state.show_json_view = False
+
+        # Toggle Button
+        if st.button("Toggle JSON/Text View"):
+            st.session_state.show_json_view = not st.session_state.show_json_view
+
+        if st.session_state.show_json_view:
+            st.json(st.session_state.get("remediation_output", {}))
+        else:
+            rem_output = st.session_state.get("remediation_output", {})
+            for key, value in rem_output.items():
+                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+
         st.write(f"Issue class: {st.session_state.get('remediation_issue_class', 'Unknown')}")
         st.write(st.session_state.get("remediation_next_action", ""))
 with tabs[1]:
