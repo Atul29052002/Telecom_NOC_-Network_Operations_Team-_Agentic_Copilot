@@ -1,32 +1,35 @@
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
-from typing import Any
 
-import matplotlib.pyplot as plt
-import numpy as np
+import networkx as nx
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agents import root_cause_agent
-from app.engine import load_or_stream_alarm_logs, run_root_cause_engine
-from app.data_generation import build_demo_assets
+from app.engine import run_root_cause_engine
+from app.noc_ui import (
+    COLORS,
+    kpi_card,
+    page_header,
+    render_grid,
+    report_card,
+    section_header,
+    style_plotly,
+)
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = PROJECT_ROOT / "data"
 ALARM_PATH = DATA_DIR / "alarm_logs.csv"
-STATE_PATH = DATA_DIR / "telecom_state.json"
 NT_PATH = DATA_DIR / "network_topology.jpg"
 AC_PATH = DATA_DIR / "root_cause_subgraph.jpg"
-
-df = pd.read_csv(ALARM_PATH)
 
 
 @st.cache_data(show_spinner="Running root cause engine...")
@@ -34,166 +37,216 @@ def load_top_candidates() -> pd.DataFrame:
     engine_output = run_root_cause_engine(str(ALARM_PATH), output_dir=str(DATA_DIR))
     return pd.DataFrame(engine_output["top_candidates"])
 
-st.markdown(
-    """
-<style>
-    .stApp { background-color: #0f172a; color: #f8fafc; }
-    .enterprise-card {
-        background: #1e293b; border: 1px solid #334155; border-radius: 12px;
-        padding: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); margin-bottom: 1rem;
+
+@st.cache_data
+def load_alarm_data() -> pd.DataFrame:
+    return pd.read_csv(ALARM_PATH)
+
+
+def build_topology_figure(alarms: pd.DataFrame) -> go.Figure:
+    graph = nx.Graph()
+    relations = (
+        alarms[["equipment_name", "alarm_name", "severity"]]
+        .drop_duplicates()
+        .head(35)
+    )
+    for row in relations.itertuples(index=False):
+        graph.add_node(row.equipment_name, kind="equipment", severity=row.severity)
+        graph.add_node(row.alarm_name, kind="alarm", severity=row.severity)
+        graph.add_edge(row.equipment_name, row.alarm_name)
+
+    positions = nx.spring_layout(graph, seed=17, k=0.75)
+    edge_x, edge_y = [], []
+    for source, target in graph.edges():
+        x0, y0 = positions[source]
+        x1, y1 = positions[target]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    fig = go.Figure(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line=dict(width=1, color="rgba(148,163,184,.28)"),
+            hoverinfo="skip",
+        )
+    )
+    severity_colors = {
+        "Critical": COLORS["danger"],
+        "Major": COLORS["warning"],
+        "Minor": "#EAB308",
     }
-    button[data-baseweb="tab"] { font-size: 1.1rem !important; font-weight: 600 !important; }
-    h1, h2, h3 { color: #f8fafc; font-weight: 700; }
-    .stImage { border-radius: 12px; border: 1px solid #334155; }
-</style>
-""", unsafe_allow_html=True)
-st.header('Root Cause Dashboard')
-tabs = st.tabs(['Root Cause Nodes', 'Network Topology', 'Root Cause Alarm Subgraph'])
-
-with tabs[0]:
-    st.subheader('Key Root Cause Nodes')
-    top_candidates_df = load_top_candidates()
-    st.dataframe(top_candidates_df, use_container_width=True, hide_index=True)
-
-    agent_col, status_col = st.columns([4, 1])
-    with agent_col:
-        if st.button('Root Cause Identification Agent'):
-            with st.spinner('Root Cause Identification Agent running...'):
-                agent_state = root_cause_agent({
-                    "alarm_path": str(ALARM_PATH),
-                    "topology_path": str(NT_PATH),
-                    "graph_path": str(AC_PATH),
-                })
-            st.session_state["root_cause_output"] = agent_state.get("root_cause_output", {})
-            st.session_state["root_cause_agent_executed"] = True
-
-    if st.session_state.get("root_cause_agent_executed"):
-        with status_col:
-            st.success("Executed")
-        st.subheader('Root Cause Identification Agent Output')
-
-        # Initialize toggle state for Root Cause view
-        if "show_json_rca" not in st.session_state:
-            st.session_state.show_json_rca = False
-
-        # Toggle Button
-        if st.button("Toggle JSON/Text View"):
-            st.session_state.show_json_rca = not st.session_state.show_json_rca
-
-        rc_output = st.session_state.get("root_cause_output", {})
-        if st.session_state.show_json_rca:
-            st.json(rc_output)
-        else:
-            for key, value in rc_output.items():
-                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+    for kind in ("equipment", "alarm"):
+        nodes = [node for node, attrs in graph.nodes(data=True) if attrs["kind"] == kind]
+        fig.add_trace(
+            go.Scatter(
+                x=[positions[node][0] for node in nodes],
+                y=[positions[node][1] for node in nodes],
+                text=nodes,
+                customdata=[graph.nodes[node]["severity"] for node in nodes],
+                mode="markers+text",
+                name=kind.title(),
+                textposition="top center",
+                textfont=dict(size=9, color=COLORS["muted"]),
+                marker=dict(
+                    size=18 if kind == "equipment" else 12,
+                    color=[
+                        COLORS["primary"]
+                        if kind == "equipment"
+                        else severity_colors.get(graph.nodes[node]["severity"], COLORS["warning"])
+                        for node in nodes
+                    ],
+                    line=dict(width=1, color="#D7F7FF"),
+                    opacity=0.88,
+                ),
+                hovertemplate="<b>%{text}</b><br>Severity: %{customdata}<extra></extra>",
+            )
+        )
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.update_layout(
+        title=dict(text="Interactive Dependency Topology", font=dict(size=13)),
+        showlegend=True,
+    )
+    return style_plotly(fig, height=470)
 
 
-with tabs[1]:
-    #st.subheader('Network Topology')
-    st.image(NT_PATH)
+page_header(
+    "Root Cause Analysis",
+    "AI-assisted root cause identification with ranked evidence and topology context.",
+    "Incident Intelligence",
+)
 
-with tabs[2]:
-    #st.subheader('Root Cause Alarm Subgraph')
-    st.image(AC_PATH)
+top_candidates_df = load_top_candidates()
+alarm_df = load_alarm_data()
+rc_output = st.session_state.get("root_cause_output", {})
+confidence = int(float(rc_output.get("confidence", 0)) * 100)
 
-# st.set_page_config(page_title="Telecom NOC Command Center", page_icon="📡", layout="wide")
+summary_cols = st.columns(4)
+with summary_cols[0]:
+    kpi_card(
+        "Root cause",
+        rc_output.get("root_cause", "Pending"),
+        "Latest agent conclusion",
+        "danger" if rc_output else "primary",
+        "!",
+    )
+with summary_cols[1]:
+    kpi_card("Confidence", f"{confidence}%", "AI confidence score", "success", "%")
+with summary_cols[2]:
+    kpi_card(
+        "Candidates",
+        len(top_candidates_df),
+        "Ranked by graph score",
+        "primary",
+        "#",
+    )
+with summary_cols[3]:
+    affected = len(rc_output.get("affected_equipment", []))
+    kpi_card("Affected assets", affected, "Confirmed equipment", "warning", "◆")
 
+report_tab, topology_tab, evidence_tab = st.tabs(
+    ["Investigation Report", "Interactive Topology", "Alarm Evidence"]
+)
 
-# @st.cache_data(show_spinner=False)
-# def load_state() -> dict[str, Any]:
-#     if STATE_PATH.exists():
-#         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-#     return {}
+with report_tab:
+    action_col, candidates_col = st.columns([0.37, 0.63])
+    with action_col:
+        with st.container(border=True):
+            section_header("RCA Agent", "On demand")
+            st.caption(
+                "Correlate alarm clusters, graph rank, topology evidence, and model reasoning."
+            )
+            if st.button(
+                "Run Root Cause Identification",
+                type="primary",
+                width="stretch",
+            ):
+                with st.spinner("Root Cause Identification Agent running..."):
+                    agent_state = root_cause_agent(
+                        {
+                            "alarm_path": str(ALARM_PATH),
+                            "topology_path": str(NT_PATH),
+                            "graph_path": str(AC_PATH),
+                        }
+                    )
+                st.session_state["root_cause_output"] = agent_state.get(
+                    "root_cause_output", {}
+                )
+                st.session_state["root_cause_agent_executed"] = True
+                st.rerun()
+    with candidates_col:
+        with st.container(border=True):
+            section_header("Top Root Cause Nodes", "Search, sort, and filter")
+            render_grid(
+                top_candidates_df,
+                key="rca_candidates_grid",
+                height=300,
+                search_label="Search RCA candidates",
+            )
 
+    if st.session_state.get("root_cause_agent_executed") or rc_output:
+        rc_output = st.session_state.get("root_cause_output", rc_output)
+        st.write("")
+        detail_col, reasoning_col = st.columns([0.34, 0.66])
+        with detail_col:
+            report_card(
+                [
+                    ("Identified root cause", rc_output.get("root_cause", "Analyzing"), "danger"),
+                    ("Confidence", f"{int(float(rc_output.get('confidence', 0)) * 100)}%", "success"),
+                    ("Impact radius", rc_output.get("impact", "N/A"), "primary"),
+                    (
+                        "Affected equipment",
+                        ", ".join(rc_output.get("affected_equipment", [])) or "N/A",
+                        "",
+                    ),
+                ]
+            )
+        with reasoning_col:
+            with st.container(border=True):
+                section_header("AI Investigation Report", "Evidence-backed conclusion")
+                st.write(rc_output.get("reasoning", "No reasoning provided."))
+                affected_equipment = rc_output.get("affected_equipment", [])
+                if affected_equipment:
+                    st.markdown(
+                        "**Affected equipment:** "
+                        + ", ".join(f"`{item}`" for item in affected_equipment)
+                    )
+                with st.expander("Raw agent output"):
+                    st.json(rc_output)
 
-# def save_state(state: dict[str, Any]) -> None:
-#     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+with topology_tab:
+    graph_col, source_col = st.columns([0.68, 0.32])
+    with graph_col:
+        with st.container(border=True):
+            st.plotly_chart(
+                build_topology_figure(alarm_df),
+                width="stretch",
+                config={"displayModeBar": False, "responsive": True},
+            )
+    with source_col:
+        with st.container(border=True):
+            section_header("Topology Source", "Reference artifact")
+            st.image(str(NT_PATH), width="stretch")
+            st.caption(
+                "The interactive view is derived from current alarm-to-equipment relationships; "
+                "the source topology remains available for visual verification."
+            )
 
-
-# def ensure_assets() -> None:
-#     if not ALARM_PATH.exists():
-#         build_demo_assets(str(DATA_DIR))
-
-
-# ensure_assets()
-# state = load_state()
-
-# if "workflow_result" not in state:
-#     state["workflow_result"] = {}
-
-# st.markdown("# Modern Telecom NOC Command Center")
-# st.markdown("Dark theme operational overview for telecom incident response")
-
-# with st.sidebar:
-#     st.header("Navigation")
-#     page = st.radio("Go to", [
-#         "Live Alarm Dashboard",
-#         "Alarm Heatmap",
-#         "Root Cause Graph",
-#         "Agent Reasoning Panel",
-#         "Remediation Recommendation",
-#         "Human Approval Console",
-#         "MCP Execution Status",
-#         "ITSM Tickets",
-#     ])
-
-#     if st.button("Run Analysis"):
-#         engine_output = run_root_cause_engine(str(ALARM_PATH), output_dir=str(DATA_DIR))
-#         workflow_result = run_workflow(str(ALARM_PATH), approval="Approve")
-#         state["engine_output"] = engine_output
-#         state["workflow_result"] = workflow_result
-#         save_state(state)
-#         st.success("Analysis completed")
-
-# if page == "Live Alarm Dashboard":
-#     alarms = load_or_stream_alarm_logs(ALARM_PATH)
-#     active_alarms = len(alarms)
-#     critical_alarms = int((alarms["severity"] == "Critical").sum())
-#     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-#     kpi1.metric("Active Alarms", active_alarms)
-#     kpi2.metric("Critical Alarms", critical_alarms)
-#     kpi3.metric("Root Causes Detected", len(state.get("engine_output", {}).get("top_candidates", [])))
-#     kpi4.metric("Auto Resolutions", len(state.get("workflow_result", {}).get("execution_status", {}).keys()) if isinstance(state.get("workflow_result", {}).get("execution_status", {}), dict) else 0)
-#     kpi5.metric("SLA Risk", "High" if critical_alarms > 0 else "Low")
-
-#     st.subheader("Latest alarms")
-#     st.dataframe(alarms.tail(20)[["alarm_id", "alarm_name", "equipment_name", "severity", "alarm_raised_time"]], use_container_width=True)
-
-# elif page == "Alarm Heatmap":
-#     alarms = load_or_stream_alarm_logs(ALARM_PATH)
-#     fig, ax = plt.subplots(figsize=(7, 5))
-#     heatmap, xedges, yedges = np.histogram2d(alarms["longitude"], alarms["latitude"], bins=10)
-#     im = ax.imshow(heatmap.T, origin="lower", extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], cmap="hot")
-#     fig.colorbar(im, ax=ax)
-#     ax.set_title("Alarm Density Heatmap")
-#     ax.set_xlabel("Longitude")
-#     ax.set_ylabel("Latitude")
-#     st.pyplot(fig)
-
-# elif page == "Root Cause Graph":
-#     st.image(str(DATA_DIR / "root_cause_subgraph.jpg"))
-
-# elif page == "Agent Reasoning Panel":
-#     root_output = state.get("workflow_result", {}).get("root_cause_output", {})
-#     st.write(root_output if root_output else {"message": "No root cause output yet"})
-
-# elif page == "Remediation Recommendation":
-#     remediation = state.get("workflow_result", {}).get("remediation_output", {})
-#     st.write(remediation if remediation else {"message": "No remediation recommendation yet"})
-
-# elif page == "Human Approval Console":
-#     decision = st.radio("Approval", ["Approve", "Reject", "Modify"], horizontal=True)
-#     if st.button("Submit Approval"):
-#         state["workflow_result"]["approval"] = decision
-#         save_state(state)
-#         st.success(f"Decision recorded: {decision}")
-
-# elif page == "MCP Execution Status":
-#     st.write(state.get("workflow_result", {}).get("execution_status", {"status": "No execution yet"}))
-
-# elif page == "ITSM Tickets":
-#     defect_log = DATA_DIR / "defect_log.csv"
-#     if defect_log.exists():
-#         st.dataframe(pd.read_csv(defect_log), use_container_width=True)
-#     else:
-#         st.info("No tickets created yet")
+with evidence_tab:
+    image_col, context_col = st.columns([0.62, 0.38])
+    with image_col:
+        with st.container(border=True):
+            section_header("Root Cause Alarm Subgraph", "Generated by RCA engine")
+            st.image(str(AC_PATH), width="stretch")
+    with context_col:
+        with st.container(border=True):
+            section_header("Evidence Context", "Latest agent observations")
+            image_descriptions = rc_output.get("image_descriptions", [])
+            if image_descriptions:
+                for item in image_descriptions:
+                    st.markdown(f"**{item.get('label', 'Evidence')}**")
+                    st.caption(item.get("description", "No description available."))
+            else:
+                st.info("Run the RCA agent to populate visual evidence descriptions.")
