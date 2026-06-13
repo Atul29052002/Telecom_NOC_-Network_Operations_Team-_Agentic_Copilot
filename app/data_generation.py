@@ -20,80 +20,121 @@ random.seed(RANDOM_SEED)
 
 
 def _select_topology_equipment(alarm_name: str) -> tuple[str, str, str, float, float]:
+    """Return (equipment_id, equipment_name, vendor, lat, lon) for a given alarm."""
     topology_map = {
-        "Fiber Cut": [("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)],
-        "Link Down": [("TWR-1001", "Tower 1001", "Ericsson", 12.9685, 77.5965), ("TWR-1002", "Tower 1002", "Huawei", 12.9710, 77.6050), ("TWR-1003", "Tower 1003", "ZTE", 12.9648, 77.6078)],
-        "Router CPU High": [("CORE-01", "Core Router", "Nokia", 12.9726, 77.5933), ("AGG-01", "Aggregation Router", "Juniper", 12.9704, 77.5984), ("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)],
-        "Power Failure": [("TWR-1004", "Tower 1004", "Nokia", 12.9730, 77.6110), ("TWR-1005", "Tower 1005", "Ericsson", 12.9678, 77.5902)],
-        "Backhaul Failure": [("AGG-01", "Aggregation Router", "Juniper", 12.9704, 77.5984), ("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)],
-        "Tower Down": [("TWR-1001", "Tower 1001", "Ericsson", 12.9685, 77.5965), ("TWR-1002", "Tower 1002", "Huawei", 12.9710, 77.6050), ("TWR-1004", "Tower 1004", "Nokia", 12.9730, 77.6110)],
-        "Packet Loss": [("TWR-1001", "Tower 1001", "Ericsson", 12.9685, 77.5965), ("TWR-1002", "Tower 1002", "Huawei", 12.9710, 77.6050), ("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)],
-        "BGP Failure": [("CORE-01", "Core Router", "Nokia", 12.9726, 77.5933), ("AGG-01", "Aggregation Router", "Juniper", 12.9704, 77.5984)],
-        "Interface Down": [("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020), ("AGG-01", "Aggregation Router", "Juniper", 12.9704, 77.5984), ("TWR-1001", "Tower 1001", "Ericsson", 12.9685, 77.5965)],
-        "Service Degradation": [("TWR-1004", "Tower 1004", "Nokia", 12.9730, 77.6110), ("TWR-1005", "Tower 1005", "Ericsson", 12.9678, 77.5902), ("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)],
+        # --- Router-centric alarms (majority) ---
+        "Router CPU High": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("EDGE-RTR-02", "Edge Router 02", "Cisco", 12.9645, 77.6055),
+            ("AGG-RTR-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
+            ("CORE-RTR-01", "Core Router", "Nokia", 12.9726, 77.5933),
+        ],
+        "Router Interface Flap": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("EDGE-RTR-02", "Edge Router 02", "Cisco", 12.9645, 77.6055),
+            ("AGG-RTR-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
+        ],
+        "Router Memory High": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("EDGE-RTR-02", "Edge Router 02", "Cisco", 12.9645, 77.6055),
+            ("CORE-RTR-01", "Core Router", "Nokia", 12.9726, 77.5933),
+        ],
+        "Router Config Drift": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("AGG-RTR-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
+        ],
+        "Router Packet Loss": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("EDGE-RTR-02", "Edge Router 02", "Cisco", 12.9645, 77.6055),
+            ("AGG-RTR-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
+            ("CORE-RTR-01", "Core Router", "Nokia", 12.9726, 77.5933),
+        ],
+        # --- Minor non-router alarms for realism ---
+        "Link Down": [
+            ("SW-ACC-01", "Access Switch 01", "Arista", 12.9685, 77.5965),
+            ("SW-ACC-02", "Access Switch 02", "Arista", 12.9710, 77.6050),
+        ],
+        "Power Fluctuation": [
+            ("UPS-DC-01", "DC UPS Unit", "Emerson", 12.9730, 77.6110),
+        ],
+        "Service Degradation": [
+            ("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020),
+            ("AGG-RTR-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
+        ],
     }
-    return random.choice(topology_map.get(alarm_name, [("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020)]))
+    return random.choice(topology_map.get(alarm_name, [("EDGE-RTR-01", "Edge Router 01", "Cisco", 12.9660, 77.6020)]))
 
 
 def generate_alarm_logs(output_path: str = "data/alarm_logs.csv", num_alarms: int = 1100) -> pd.DataFrame:
+    """Generate alarm logs dominated by minor router issues.
+
+    ~85 % of alarms are router-related with Minor severity so the
+    remediation agent classifies the fix as MINOR and routes to the
+    minor_resolver_agent for a simple router reset.
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     incident_time = datetime(2026, 6, 9, 20, 0, 0)
-    equipment_nodes = [
-        ("CORE-01", "Core Router", "Nokia", 12.9726, 77.5933),
-        ("AGG-01", "Aggregation Router", "Juniper", 12.9704, 77.5984),
-        ("EDGE-01", "Edge Router", "Cisco", 12.9660, 77.6020),
-        ("TWR-1001", "Tower 1001", "Ericsson", 12.9685, 77.5965),
-        ("TWR-1002", "Tower 1002", "Huawei", 12.9710, 77.6050),
-        ("TWR-1003", "Tower 1003", "ZTE", 12.9648, 77.6078),
-        ("TWR-1004", "Tower 1004", "Nokia", 12.9730, 77.6110),
-        ("TWR-1005", "Tower 1005", "Ericsson", 12.9678, 77.5902),
+
+    # Router-centric alarm types (used for ~85 % of alarms)
+    router_alarms = [
+        "Router CPU High",
+        "Router Interface Flap",
+        "Router Memory High",
+        "Router Config Drift",
+        "Router Packet Loss",
     ]
 
-    alarm_catalog = [
-        ("Fiber Cut", 0.28, "Critical"),
-        ("Link Down", 0.14, "Major"),
-        ("Router CPU High", 0.12, "Major"),
-        ("Power Failure", 0.08, "Critical"),
-        ("Backhaul Failure", 0.10, "Major"),
-        ("Tower Down", 0.08, "Critical"),
-        ("Packet Loss", 0.14, "Minor"),
-        ("BGP Failure", 0.08, "Major"),
-        ("Interface Down", 0.10, "Major"),
-        ("Service Degradation", 0.12, "Minor"),
+    # Non-router alarms for realism (~15 %)
+    other_alarms = [
+        ("Link Down", "Minor"),
+        ("Power Fluctuation", "Minor"),
+        ("Service Degradation", "Minor"),
     ]
 
-    rows = []
+    rows: list[dict] = []
     alert_counter = 1
-    root_cause_equipment = "EDGE-01"
-    root_cause_name = "Fiber Cut"
 
     for idx in range(num_alarms):
-        if idx < 60:
-            alarm_name = root_cause_name
-            equipment_id = root_cause_equipment
-            equipment_name = "Edge Router"
+        # ----- Phase 1: initial burst of Router CPU High on Edge Router 01 -----
+        if idx < 80:
+            alarm_name = "Router CPU High"
+            equipment_id = "EDGE-RTR-01"
+            equipment_name = "Edge Router 01"
             equipment_vendor = "Cisco"
-            severity = "Critical"
+            severity = "Minor"
             time_offset = timedelta(seconds=idx * 0.8)
-            lat = 12.9672 + random.uniform(-0.0016, 0.0014)
-            lon = 77.6001 + random.uniform(-0.0015, 0.0015)
-        elif idx < 220:
-            alarm_name = random.choice(["Link Down", "Interface Down", "Packet Loss", "Service Degradation"])
+            lat = 12.9660 + random.uniform(-0.0012, 0.0012)
+            lon = 77.6020 + random.uniform(-0.0012, 0.0012)
+
+        # ----- Phase 2: spreading router alarms across all routers -----
+        elif idx < 400:
+            alarm_name = random.choice(router_alarms)
             equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
-            severity = "Minor" if alarm_name in {"Packet Loss", "Service Degradation"} else random.choice(["Major", "Minor"])
-            time_offset = timedelta(seconds=30 + idx * 0.7)
-        elif idx < 520:
-            alarm_name = random.choice(["Router CPU High", "Backhaul Failure", "Packet Loss", "Power Failure", "BGP Failure"])
-            equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
-            severity = "Minor" if alarm_name in {"Packet Loss", "Service Degradation"} else random.choice(["Major", "Minor"])
-            time_offset = timedelta(seconds=60 + idx * 0.9)
-        else:
-            alarm_name, _, severity = random.choice(alarm_catalog)
-            equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
-            if alarm_name in {"Packet Loss", "Service Degradation"}:
+            severity = "Minor"
+            time_offset = timedelta(seconds=40 + idx * 0.7)
+
+        # ----- Phase 3: continued router alarms with a few non-router mixed in -----
+        elif idx < 850:
+            if random.random() < 0.85:
+                alarm_name = random.choice(router_alarms)
+                equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
                 severity = "Minor"
+            else:
+                alarm_name, severity = random.choice(other_alarms)
+                equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
+            time_offset = timedelta(seconds=60 + idx * 0.9)
+
+        # ----- Phase 4: tail — mostly router, occasional other -----
+        else:
+            if random.random() < 0.80:
+                alarm_name = random.choice(router_alarms)
+                equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
+                severity = "Minor"
+            else:
+                alarm_name, severity = random.choice(other_alarms)
+                equipment_id, equipment_name, equipment_vendor, lat, lon = _select_topology_equipment(alarm_name)
             time_offset = timedelta(seconds=85 + idx * 1.2)
 
         event_time = incident_time + time_offset
@@ -120,43 +161,62 @@ def generate_alarm_logs(output_path: str = "data/alarm_logs.csv", num_alarms: in
 
 
 def generate_topology_image(output_path: str = "data/network_topology.jpg") -> None:
+    """Generate a topology image containing every equipment node from the alarm log."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     g = nx.Graph()
-    g.add_node("Core Router", type="core")
-    g.add_node("Aggregation Router", type="aggregation")
-    g.add_node("Edge Router", type="edge")
-    for tower_id in ["Tower 1001", "Tower 1002", "Tower 1003", "Tower 1004", "Tower 1005"]:
-        g.add_node(tower_id, type="tower")
 
-    g.add_edge("Core Router", "Aggregation Router", link_type="fiber")
-    g.add_edge("Aggregation Router", "Edge Router", link_type="fiber")
-    g.add_edge("Edge Router", "Tower 1001", link_type="fiber")
-    g.add_edge("Edge Router", "Tower 1002", link_type="fiber")
-    g.add_edge("Edge Router", "Tower 1003", link_type="fiber")
-    g.add_edge("Aggregation Router", "Tower 1004", link_type="microwave")
-    g.add_edge("Aggregation Router", "Tower 1005", link_type="microwave")
+    # --- Router nodes (match alarm-log equipment) ---
+    g.add_node("Core Router\n(CORE-RTR-01)", type="core")
+    g.add_node("Aggregation Router\n(AGG-RTR-01)", type="aggregation")
+    g.add_node("Edge Router 01\n(EDGE-RTR-01)", type="edge")
+    g.add_node("Edge Router 02\n(EDGE-RTR-02)", type="edge")
+
+    # --- Non-router nodes (also in alarm log) ---
+    g.add_node("Access Switch 01\n(SW-ACC-01)", type="switch")
+    g.add_node("Access Switch 02\n(SW-ACC-02)", type="switch")
+    g.add_node("DC UPS Unit\n(UPS-DC-01)", type="power")
+
+    # --- Links ---
+    g.add_edge("Core Router\n(CORE-RTR-01)", "Aggregation Router\n(AGG-RTR-01)", link_type="fiber")
+    g.add_edge("Aggregation Router\n(AGG-RTR-01)", "Edge Router 01\n(EDGE-RTR-01)", link_type="fiber")
+    g.add_edge("Aggregation Router\n(AGG-RTR-01)", "Edge Router 02\n(EDGE-RTR-02)", link_type="fiber")
+    g.add_edge("Edge Router 01\n(EDGE-RTR-01)", "Access Switch 01\n(SW-ACC-01)", link_type="ethernet")
+    g.add_edge("Edge Router 02\n(EDGE-RTR-02)", "Access Switch 02\n(SW-ACC-02)", link_type="ethernet")
+    g.add_edge("DC UPS Unit\n(UPS-DC-01)", "Core Router\n(CORE-RTR-01)", link_type="power")
+    g.add_edge("DC UPS Unit\n(UPS-DC-01)", "Aggregation Router\n(AGG-RTR-01)", link_type="power")
 
     pos = {
-        "Core Router": (0.2, 0.8),
-        "Aggregation Router": (0.4, 0.65),
-        "Edge Router": (0.6, 0.55),
-        "Tower 1001": (0.75, 0.8),
-        "Tower 1002": (0.82, 0.65),
-        "Tower 1003": (0.79, 0.45),
-        "Tower 1004": (0.4, 0.3),
-        "Tower 1005": (0.2, 0.4),
+        "Core Router\n(CORE-RTR-01)": (0.2, 0.8),
+        "Aggregation Router\n(AGG-RTR-01)": (0.45, 0.65),
+        "Edge Router 01\n(EDGE-RTR-01)": (0.7, 0.8),
+        "Edge Router 02\n(EDGE-RTR-02)": (0.7, 0.5),
+        "Access Switch 01\n(SW-ACC-01)": (0.9, 0.8),
+        "Access Switch 02\n(SW-ACC-02)": (0.9, 0.5),
+        "DC UPS Unit\n(UPS-DC-01)": (0.1, 0.45),
     }
 
-    fig, ax = plt.subplots(figsize=(10, 7))
+    # Node colours by type
+    color_map = {
+        "core": "#1f77b4",
+        "aggregation": "#ff7f0e",
+        "edge": "#2ca02c",
+        "switch": "#9467bd",
+        "power": "#d62728",
+    }
+    node_colors = [color_map.get(g.nodes[n].get("type", ""), "#7f7f7f") for n in g.nodes()]
+
+    fig, ax = plt.subplots(figsize=(12, 7))
     fiber_edges = [(u, v) for u, v, d in g.edges(data=True) if d["link_type"] == "fiber"]
-    microwave_edges = [(u, v) for u, v, d in g.edges(data=True) if d["link_type"] == "microwave"]
-    nx.draw_networkx_edges(g, pos, edgelist=fiber_edges, edge_color="royalblue", width=2.2)
-    nx.draw_networkx_edges(g, pos, edgelist=microwave_edges, edge_color="orange", width=1.8, style="dashed")
-    nx.draw_networkx_nodes(g, pos, node_color=["#1f77b4" if n == "Core Router" else "#ff7f0e" if n == "Aggregation Router" else "#2ca02c" if n == "Edge Router" else "#d62728" for n in g.nodes()], node_size=900)
-    nx.draw_networkx_labels(g, pos, font_size=10)
-    ax.set_title("Telecom Network Topology")
+    ethernet_edges = [(u, v) for u, v, d in g.edges(data=True) if d["link_type"] == "ethernet"]
+    power_edges = [(u, v) for u, v, d in g.edges(data=True) if d["link_type"] == "power"]
+    nx.draw_networkx_edges(g, pos, edgelist=fiber_edges, edge_color="royalblue", width=2.2, ax=ax)
+    nx.draw_networkx_edges(g, pos, edgelist=ethernet_edges, edge_color="green", width=1.8, ax=ax)
+    nx.draw_networkx_edges(g, pos, edgelist=power_edges, edge_color="red", width=1.5, style="dashed", ax=ax)
+    nx.draw_networkx_nodes(g, pos, node_color=node_colors, node_size=1100, ax=ax)
+    nx.draw_networkx_labels(g, pos, font_size=8, ax=ax)
+    ax.set_title("Telecom Network Topology (Router-Centric)")
     ax.axis("off")
     plt.tight_layout()
     plt.savefig(output_path, dpi=250)
