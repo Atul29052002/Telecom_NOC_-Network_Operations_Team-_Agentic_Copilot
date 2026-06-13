@@ -33,10 +33,24 @@ def load_state() -> dict[str, Any]:
 
 
 state = load_state()
-workflow_result = state.get("workflow_result", {})
-approval = workflow_result.get("approval")
+workflow_result = dict(state.get("workflow_result", {}))
+
+# The RCA and remediation pages keep their newest agent results in the shared
+# Streamlit session. Prefer those values over the last persisted workflow run.
+session_root_cause = st.session_state.get("root_cause_output")
+session_remediation = st.session_state.get("remediation_output")
+session_issue_class = st.session_state.get("remediation_issue_class")
+if session_root_cause:
+    workflow_result["root_cause_output"] = session_root_cause
+if session_remediation:
+    workflow_result["remediation_output"] = session_remediation
+if session_issue_class:
+    workflow_result["issue_class"] = session_issue_class
+
+approval_committed = bool(workflow_result.get("approval_committed", False))
+approval = workflow_result.get("approval") if approval_committed else None
 execution_status = workflow_result.get("execution_status", {})
-active_index = 5 if execution_status else 4 if approval else 3
+active_index = 5 if approval_committed and execution_status else 4 if approval_committed else 3
 
 page_header(
     "Auto Resolution Console",
@@ -83,12 +97,12 @@ with approval_tab:
         with st.container(border=True):
             section_header("Human-in-the-Loop Action", "Required control point")
             decision = st.radio(
-                "Select Workflow Policy",
-                ["Approve", "Reject", "Modify"],
+                "Please review the proposed remediation and select an action:",
+                ["Approve", "Reject"],
                 horizontal=True,
             )
             st.caption(
-                "The workflow proceeds only after an explicit operator decision is committed."
+                " Once the decision is approved, the workflow proceeds to minor issue resolution agent."
             )
             if st.button(
                 "Commit Decision",
@@ -96,6 +110,7 @@ with approval_tab:
                 width="stretch",
             ):
                 workflow_result["approval"] = decision
+                workflow_result["approval_committed"] = True
                 state["workflow_result"] = workflow_result
                 STATE_PATH.write_text(
                     json.dumps(state, indent=2),
@@ -105,13 +120,29 @@ with approval_tab:
                 st.rerun()
 
     with proposal_col:
+        rc_output = workflow_result.get("root_cause_output", {})
         rem_output = workflow_result.get("remediation_output", {})
-        if rem_output:
+        identified_issue = rc_output.get("root_cause", "")
+        remediation_issue = rem_output.get("root_cause", "")
+        outputs_are_synced = bool(
+            rc_output
+            and rem_output
+            and identified_issue
+            and remediation_issue
+            and identified_issue.strip().casefold()
+            == remediation_issue.strip().casefold()
+        )
+        if outputs_are_synced:
+            affected_equipment = rc_output.get("affected_equipment", [])
+            if isinstance(affected_equipment, str):
+                affected_equipment = [affected_equipment]
+            target = ", ".join(affected_equipment) or "Unknown"
             with st.container(border=True):
                 section_header("Proposed Remediation", "AI-generated recovery plan")
                 report_card(
                     [
-                        ("Target", rem_output.get("root_cause", "Unknown"), "danger"),
+                        ("Identified issue", identified_issue, "danger"),
+                        ("Target", target, "primary"),
                         (
                             "Complexity",
                             rem_output.get("complexity", workflow_result.get("issue_class", "N/A")),
@@ -128,7 +159,10 @@ with approval_tab:
                 st.write(rem_output.get("fix", "Review Required"))
         else:
             with st.container(border=True):
-                st.info("No active remediation proposal available.")
+                st.info(
+                    "No synchronized remediation proposal is available. "
+                    "Run the analysis workflow to populate both agent outputs."
+                )
 
 with execution_tab:
     preview_col, log_col = st.columns([0.55, 0.45])

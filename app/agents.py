@@ -375,9 +375,9 @@ def remediation_agent(state: NocState) -> NocState:
     # Deterministic fallback: router alarms are SIMPLE FIX, infrastructure alarms are COMPLEX FIX.
     is_router = "router" in root_cause.lower()
     complexity = "SIMPLE FIX" if is_router else "COMPLEX FIX"
-    if documents:
-        fix = documents[0].page_content
-    elif complexity == "SIMPLE FIX":
+    # if documents:
+        # fix = documents[0].page_content
+    if complexity == "SIMPLE FIX":
         fix = "Perform a controlled router reset on the affected edge router, monitor interface and CPU stability, and confirm alarm clearance."
     else:
         fix = "Dispatch field operations, isolate the impacted segment, validate alternate routing, repair the physical fault, and confirm alarm clearance."
