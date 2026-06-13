@@ -131,11 +131,12 @@ def build_alarm_graph(df: pd.DataFrame) -> tuple[nx.DiGraph, list[dict[str, Any]
             time_delta = abs((row_a["alarm_raised_time"] - row_b["alarm_raised_time"]).total_seconds())
             geo_delta = haversine_km(row_a["latitude"], row_a["longitude"], row_b["latitude"], row_b["longitude"])
             same_equipment = row_a["equipment_id"] == row_b["equipment_id"]
-            dependency = row_a["alarm_name"] in {"Fiber Cut", "Link Down", "BGP Failure"} or row_b["alarm_name"] in {"Fiber Cut", "Link Down", "BGP Failure"}
+            router_alarms = {"Router CPU High", "Router Interface Flap", "Router Memory High", "Router Config Drift", "Router Packet Loss"}
+            dependency = row_a["alarm_name"] in router_alarms or row_b["alarm_name"] in router_alarms
             if time_delta <= 120 and geo_delta <= 2.5 and (same_equipment or dependency):
                 weight = 0.4 * severity_rank.get(str(row_b["severity"]), 1) + 0.3 * (1 / (time_delta / 30 + 1)) + 0.3 * (1 / (geo_delta + 1))
-                if row_a["alarm_name"] == "Fiber Cut" or row_b["alarm_name"] == "Fiber Cut":
-                    weight += 1.0
+                if row_a["alarm_name"] == "Router CPU High" or row_b["alarm_name"] == "Router CPU High":
+                    weight += 0.8
                 graph.add_edge(i, j, weight=round(weight, 3))
 
     ranked_nodes = []
@@ -201,12 +202,18 @@ def run_root_cause_engine(alarm_path: str, output_dir: str = "data") -> dict[str
 
     candidate_rows = []
     for item in ranked_nodes[:2]:
+        row = clustered_df.loc[item["node"]]
         candidate_rows.append({
-            "alarm_id": clustered_df.loc[item["node"], "alarm_id"],
-            "alarm_name": clustered_df.loc[item["node"], "alarm_name"],
-            "equipment": clustered_df.loc[item["node"], "equipment_name"],
-            "timestamp": clustered_df.loc[item["node"], "alarm_raised_time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "severity": clustered_df.loc[item["node"], "severity"],
+            "alarm_id": row["alarm_id"],
+            "alarm_name": row["alarm_name"],
+            "equipment_id": row["equipment_id"],
+            "equipment_name": row["equipment_name"],
+            "equipment_vendor": row["equipment_vendor"],
+            "alarm_raised_time": row["alarm_raised_time"].strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": row["duration_seconds"],
+            "severity": row["severity"],
+            "latitude": row["latitude"],
+            "longitude": row["longitude"],
             "score": item["score"],
         })
 
