@@ -24,6 +24,7 @@ class NocState(TypedDict, total=False):
     issue_class: str
     approval: str
     execution_status: dict[str, Any]
+    minor_resolver_output: dict[str, Any]
     ticket_id: str
 
 
@@ -204,6 +205,49 @@ def _clamp_confidence(value: Any, default: float = 0.85) -> float:
     except (TypeError, ValueError):
         confidence = default
     return round(max(0.0, min(1.0, confidence)), 2)
+
+
+def record_defect_log(
+    state: NocState,
+    status: str,
+    *,
+    root_cause: str | None = None,
+    severity: str | None = None,
+    resolution_summary: str | None = None,
+) -> NocState:
+    """Append the current incident outcome to defect_log.csv."""
+    defect_log = Path(state["alarm_path"]).parent / "defect_log.csv"
+    df = (
+        pd.read_csv(defect_log)
+        if defect_log.exists()
+        else pd.DataFrame(
+            columns=[
+                "ticket_id",
+                "root_cause",
+                "severity",
+                "status",
+                "created_at",
+                "resolution_summary",
+            ]
+        )
+    )
+    if "resolution_summary" not in df.columns:
+        df["resolution_summary"] = ""
+
+    ticket_id = f"TKT-{len(df)+1:03d}"
+    row = {
+        "ticket_id": ticket_id,
+        "root_cause": root_cause
+        or state.get("root_cause_output", {}).get("root_cause", "Unknown"),
+        "severity": severity or state.get("issue_class", "Unknown"),
+        "status": status,
+        "created_at": pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "resolution_summary": resolution_summary or "",
+    }
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df.to_csv(defect_log, index=False)
+    state["ticket_id"] = ticket_id
+    return state
 
 
 def _heuristic_root_cause(
@@ -397,25 +441,44 @@ def issue_classifier(state: NocState) -> NocState:
 
 
 def create_ticket(state: NocState) -> NocState:
-    defect_log = Path(state["alarm_path"]).parent / "defect_log.csv"
-    df = pd.read_csv(defect_log) if defect_log.exists() else pd.DataFrame(columns=["ticket_id", "root_cause", "severity", "status", "created_at"])
-    ticket_id = f"TKT-{len(df)+1:03d}"
-    row = {
-        "ticket_id": ticket_id,
-        "root_cause": state["root_cause_output"].get("root_cause", "Unknown"),
-        "severity": state["issue_class"],
-        "status": "Open",
-        "created_at": pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    df.to_csv(defect_log, index=False)
-    state["ticket_id"] = ticket_id
-    return state
+    return record_defect_log(
+        state,
+        "Open",
+        root_cause=state["root_cause_output"].get("root_cause", "Unknown"),
+        severity=state["issue_class"],
+        resolution_summary="Complex issue routed to defect queue for manual resolution.",
+    )
 
 
 def human_approval(state: NocState) -> NocState:
     state["approval"] = state.get("approval", "Approve")
     return state
+
+
+def human_rejection_handler(state: NocState) -> NocState:
+    root_cause_output = state.get("root_cause_output", {})
+    remediation_output = state.get("remediation_output", {})
+    root_cause = remediation_output.get("root_cause", root_cause_output.get("root_cause", "Unknown"))
+    severity = remediation_output.get("complexity", state.get("issue_class", "SIMPLE FIX"))
+    state["execution_status"] = {
+        "overall_status": "rejected",
+        "message": "Human operator rejected the proposed minor remediation.",
+    }
+    state["minor_resolver_output"] = {
+        "agent": "minor_resolver_agent",
+        "overall_status": "rejected",
+        "approval": state.get("approval", "Reject"),
+        "tool_execution_status": [],
+        "summary": "Resolver execution skipped because the human operator rejected the solution.",
+        "requires_escalation": True,
+    }
+    return record_defect_log(
+        state,
+        "Rejected",
+        root_cause=root_cause,
+        severity=severity,
+        resolution_summary="Human rejected the proposed solution; defect queued for review.",
+    )
 
 
 def minor_resolver_agent(state: NocState) -> NocState:
@@ -536,25 +599,47 @@ def minor_resolver_agent(state: NocState) -> NocState:
         "llm_summary": execution_summary,
     }
 
-    # ----- Step 3: Write a resolved ticket to defect_log.csv -----
-    # This ensures the Ticket Management Dashboard always shows the result.
-    defect_log = Path(state["alarm_path"]).parent / "defect_log.csv"
-    df = (
-        pd.read_csv(defect_log)
-        if defect_log.exists()
-        else pd.DataFrame(columns=["ticket_id", "root_cause", "severity", "status", "created_at"])
-    )
-    ticket_id = f"TKT-{len(df)+1:03d}"
-    row = {
-        "ticket_id": ticket_id,
+    try:
+        parsed_summary = _parse_json_response(execution_summary)
+    except Exception:
+        parsed_summary = {}
+
+    tool_results = [reset_result, clear_result, health_result]
+    state["minor_resolver_output"] = {
+        "agent": "minor_resolver_agent",
+        "approval": state.get("approval", "Approve"),
+        "target": target,
         "root_cause": root_cause,
-        "severity": complexity,
-        "status": "Resolved" if all_success else "Open",
-        "created_at": pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "fix": fix,
+        "complexity": complexity,
+        "overall_status": "success" if all_success else "partial_failure",
+        "tool_execution_status": [
+            {
+                "tool": result.get("tool", "unknown"),
+                "status": result.get("status", "unknown"),
+                "target": result.get("target", target),
+                "message": result.get("message", ""),
+                "fallback": bool(result.get("fallback", False)),
+            }
+            for result in tool_results
+        ],
+        "tool_outputs": {
+            "router_reset": reset_result,
+            "clear_router_alarms": clear_result,
+            "verify_router_health": health_result,
+        },
+        "summary": parsed_summary.get("summary", execution_summary),
+        "requires_escalation": bool(parsed_summary.get("requires_escalation", not all_success)),
     }
-    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    df.to_csv(defect_log, index=False)
-    state["ticket_id"] = ticket_id
+
+    # ----- Step 3: Write the resolver outcome to defect_log.csv -----
+    record_defect_log(
+        state,
+        "Resolved" if all_success else "Open",
+        root_cause=root_cause,
+        severity=complexity,
+        resolution_summary=state["minor_resolver_output"]["summary"],
+    )
 
     return state
 
@@ -574,6 +659,7 @@ def build_workflow() -> Any:
     workflow.add_node("issue_classifier", issue_classifier)
     workflow.add_node("create_ticket", create_ticket)
     workflow.add_node("human_approval", human_approval)
+    workflow.add_node("human_rejection_handler", human_rejection_handler)
     workflow.add_node("minor_resolver_agent", minor_resolver_agent)
 
     workflow.add_edge(START, "root_cause_engine")
@@ -585,7 +671,17 @@ def build_workflow() -> Any:
         {"create_ticket": "create_ticket", "human_approval": "human_approval"},
     )
     workflow.add_edge("create_ticket", END)
-    workflow.add_edge("human_approval", "minor_resolver_agent")
+    workflow.add_conditional_edges(
+        "human_approval",
+        lambda state: "minor_resolver_agent"
+        if state.get("approval", "Approve") == "Approve"
+        else "human_rejection_handler",
+        {
+            "minor_resolver_agent": "minor_resolver_agent",
+            "human_rejection_handler": "human_rejection_handler",
+        },
+    )
+    workflow.add_edge("human_rejection_handler", END)
     workflow.add_edge("minor_resolver_agent", END)
     return workflow.compile()
 

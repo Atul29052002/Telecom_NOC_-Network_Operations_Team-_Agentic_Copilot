@@ -253,11 +253,27 @@ def render_grid(
     )
 
 
-def workflow_stepper(steps: list[str], active_index: int) -> None:
+def workflow_stepper(
+    steps: list[str],
+    active_index: int,
+    statuses: list[str] | None = None,
+) -> None:
     parts = []
     for index, label in enumerate(steps):
-        state = "complete" if index < active_index else "active" if index == active_index else ""
-        marker = "✓" if index < active_index else str(index + 1)
+        state = (
+            statuses[index]
+            if statuses and index < len(statuses)
+            else "complete" if index < active_index else "active" if index == active_index else ""
+        )
+        marker = (
+            "✓"
+            if state == "complete"
+            else "×"
+            if state == "failed"
+            else "•"
+            if state == "active"
+            else str(index + 1)
+        )
         line = '<div class="noc-step-line"></div>' if index < len(steps) - 1 else ""
         parts.append(
             f'<div class="noc-step {state}">'

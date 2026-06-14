@@ -351,6 +351,12 @@ p, label, [data-testid="stCaptionContainer"] {
   color: #00131a;
 }
 
+.noc-step.failed .noc-step-node {
+  background: var(--noc-danger);
+  border-color: var(--noc-danger);
+  color: #190405;
+}
+
 .noc-step-label {
   color: var(--noc-muted);
   font-size: 0.65rem;
@@ -359,7 +365,7 @@ p, label, [data-testid="stCaptionContainer"] {
   white-space: nowrap;
 }
 
-.noc-step.active .noc-step-label, .noc-step.complete .noc-step-label {
+.noc-step.active .noc-step-label, .noc-step.complete .noc-step-label, .noc-step.failed .noc-step-label {
   color: var(--noc-text);
 }
 
@@ -372,6 +378,7 @@ p, label, [data-testid="stCaptionContainer"] {
 }
 
 .noc-step.complete .noc-step-line { background: var(--noc-success); }
+.noc-step.failed .noc-step-line { background: var(--noc-danger); }
 
 .noc-timeline {
   border-left: 1px solid #334155;
